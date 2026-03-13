@@ -685,10 +685,10 @@ function App(){
                           <input type="date" value={row.editDate||""} onClick={e=>e.stopPropagation()} onChange={e=>{e.stopPropagation();updateRow(row.id,"editDate",e.target.value);}} style={{background:"none",border:`1px solid ${COL.border}`,borderRadius:"6px",padding:"4px 8px",color:row.editDate?"transparent":COL.textDim,fontSize:"11px",fontFamily:"'Space Mono',monospace",outline:"none",colorScheme:"dark",cursor:"pointer",width:row.editDate?"28px":"100px",minWidth:row.editDate?"28px":"100px"}}/>
                         </div>:<span style={{fontSize:"12px",fontFamily:"'Space Mono',monospace",color:row.editDate?COL.text:COL.textDim}}>{fmtDate(row.editDate)||"—"}</span>}
                       </td>
-                      <td style={{padding:"8px",borderBottom:`1px solid ${COL.border}`,textAlign:"center",whiteSpace:"nowrap"}}>
-                        {isAdmin&&<div style={{display:"flex",gap:"4px",justifyContent:"center"}}>
-                          <button onClick={e=>{e.stopPropagation();cloneRow(row.id);}} title="Thêm kịch bản cho tổ hợp này" style={{background:"none",border:`1px solid ${COL.border}`,borderRadius:"6px",padding:"4px 8px",color:COL.accent,fontSize:"13px",cursor:"pointer",transition:"all 0.2s",fontWeight:700,lineHeight:1,fontFamily:"'DM Sans',sans-serif"}}>+</button>
-                          <button onClick={e=>{e.stopPropagation();deleteRow(row.id);}} title="Xoá dòng này" style={{background:"none",border:`1px solid rgba(239,68,68,0.2)`,borderRadius:"6px",padding:"4px 8px",color:"#ef4444",fontSize:"11px",cursor:"pointer",transition:"all 0.2s",fontWeight:700,lineHeight:1,fontFamily:"'DM Sans',sans-serif"}}>×</button>
+                      <td style={{padding:"6px",borderBottom:`1px solid ${COL.border}`,textAlign:"center"}}>
+                        {isAdmin&&<div style={{display:"flex",flexDirection:"column",gap:"3px",alignItems:"center"}}>
+                          <button onClick={e=>{e.stopPropagation();cloneRow(row.id);}} title="Thêm kịch bản cho tổ hợp này" style={{background:"none",border:`1px solid ${COL.border}`,borderRadius:"6px",padding:"3px 8px",color:COL.accent,fontSize:"13px",cursor:"pointer",transition:"all 0.2s",fontWeight:700,lineHeight:1,fontFamily:"'DM Sans',sans-serif"}}>+</button>
+                          <button onClick={e=>{e.stopPropagation();deleteRow(row.id);}} title="Xoá dòng này" style={{background:"none",border:`1px solid rgba(239,68,68,0.2)`,borderRadius:"6px",padding:"3px 8px",color:"#ef4444",fontSize:"11px",cursor:"pointer",transition:"all 0.2s",fontWeight:700,lineHeight:1,fontFamily:"'DM Sans',sans-serif"}}>×</button>
                         </div>}
                       </td>
                     </tr>
