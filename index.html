@@ -412,12 +412,67 @@ function App(){
 
   const regenerate=useCallback(async()=>{
     if(!editProducts||!editConcepts||!editKocs)return;
-    if(!confirm("Tạo lại bảng kế hoạch sẽ reset toàn bộ trạng thái, kịch bản, ngày quay. Tiếp tục?"))return;
-    saveUndo("Tạo lại bảng kế hoạch");
+    saveUndo("Cập nhật cấu hình");
+
+    // Count changes for user feedback
+    const newProds=editProducts.filter(p=>!products.find(op=>op.name===p.name));
+    const removedProds=products.filter(p=>!editProducts.find(np=>np.name===p.name));
+    const newCons=editConcepts.filter(c=>!concepts.includes(c));
+    const removedCons=concepts.filter(c=>!editConcepts.includes(c));
+    const newK=editKocs.filter(k=>!kocs.includes(k));
+    const removedK=kocs.filter(k=>!editKocs.includes(k));
+    const msgs=[];
+    if(newProds.length)msgs.push("+ "+newProds.length+" SP mới");
+    if(removedProds.length)msgs.push("- "+removedProds.length+" SP bị xoá");
+    if(newCons.length)msgs.push("+ "+newCons.length+" concept mới");
+    if(removedCons.length)msgs.push("- "+removedCons.length+" concept bị xoá");
+    if(newK.length)msgs.push("+ "+newK.length+" KOC mới");
+    if(removedK.length)msgs.push("- "+removedK.length+" KOC bị xoá");
+    if(removedProds.length||removedCons.length||removedK.length){
+      if(!confirm("Thay đổi:\n"+msgs.join("\n")+"\n\nCác dòng bị xoá sẽ mất data. Tiếp tục?"))return;
+    }
+
+    // Build set of all required combos from new config
+    const newCombos=[];
+    editKocs.forEach(koc=>{
+      editProducts.forEach(p=>{
+        editConcepts.forEach(c=>{
+          newCombos.push({koc,product:p.name,productFullName:p.fullName||p.name,productLink:p.link||"",concept:c});
+        });
+      });
+    });
+
+    // Keep existing rows that still match new config
+    const kept=[];
+    const usedKeys=new Set();
+    plan.forEach(row=>{
+      const matchProduct=editProducts.find(p=>p.name===row.product);
+      const matchConcept=editConcepts.includes(row.concept);
+      const matchKoc=editKocs.includes(row.koc);
+      if(matchProduct&&matchConcept&&matchKoc){
+        // Update product info in case name/link changed
+        kept.push({...row,productFullName:matchProduct.fullName||matchProduct.name,productLink:matchProduct.link||""});
+        usedKeys.add(row.koc+"|"+row.product+"|"+row.concept);
+      }
+    });
+
+    // Add new combos that don't exist yet
+    const added=[];
+    newCombos.forEach(combo=>{
+      const key=combo.koc+"|"+combo.product+"|"+combo.concept;
+      if(!usedKeys.has(key)){
+        added.push({...combo,id:0,script:"",scriptLink:"",shootStatus:"pending",shootDate:"",editStatus:"pending",editDate:"",status:"pending"});
+      }
+    });
+
+    // Merge and re-assign IDs
+    const merged=[...kept,...added];
+    merged.forEach((r,i)=>{r.id=i+1;});
+
     await fb.set("config",{products:editProducts,concepts:editConcepts,kocs:editKocs});
-    await fb.set("plan",genPlan(editProducts,editConcepts,editKocs));
+    await fb.set("plan",merged);
     setShowConfig(false);
-  },[editProducts,editConcepts,editKocs,saveUndo]);
+  },[editProducts,editConcepts,editKocs,plan,saveUndo]);
 
   const updateRowFb=useCallback(async(idx,field,value)=>{
     await fb.update("plan/"+idx,{[field]:value});
@@ -527,7 +582,7 @@ function App(){
           <div style={{background:COL.surface,border:`1px solid ${COL.border}`,borderRadius:"16px",padding:"24px",marginBottom:"24px",animation:"slideDown 0.3s ease"}}>
             <h3 style={{fontSize:"14px",fontWeight:700,margin:"0 0 6px 0",color:COL.text}}>Cấu hình dữ liệu đầu vào</h3>
             <p style={{fontSize:"12px",color:COL.textMuted,margin:"0 0 4px 0"}}>Rotation tự động xoay đều: Sản phẩm × Concept × KOC. Kịch bản được nhập tay cho từng dòng.</p>
-            <p style={{fontSize:"11px",color:COL.warning,margin:"0 0 20px 0"}}>⚠ Bấm "Tạo lịch sản xuất" sẽ reset toàn bộ bảng cho cả team.</p>
+            <p style={{fontSize:"11px",color:COL.success,margin:"0 0 20px 0"}}>✅ Thêm SP/concept/KOC mới sẽ chỉ thêm dòng mới, giữ nguyên data cũ. Xoá SP/concept/KOC sẽ xoá dòng tương ứng.</p>
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:"20px"}}>
               <div>
                 <label style={{fontSize:"11px",fontWeight:600,textTransform:"uppercase",letterSpacing:"0.06em",color:COL.textMuted,marginBottom:"8px",display:"flex",alignItems:"center",gap:"4px"}}>🔗 Sản phẩm (Mã + Tên + Link)</label>
@@ -543,7 +598,7 @@ function App(){
               </div>
             </div>
             <div style={{marginTop:"20px",display:"flex",gap:"10px"}}>
-              <button onClick={regenerate} style={{padding:"10px 24px",borderRadius:"10px",border:"none",background:COL.accent,color:"#fff",fontSize:"13px",fontWeight:700,cursor:"pointer",fontFamily:"'DM Sans',sans-serif"}}>Tạo lịch sản xuất</button>
+              <button onClick={regenerate} style={{padding:"10px 24px",borderRadius:"10px",border:"none",background:COL.accent,color:"#fff",fontSize:"13px",fontWeight:700,cursor:"pointer",fontFamily:"'DM Sans',sans-serif"}}>Cập nhật bảng kế hoạch</button>
               <button onClick={()=>setShowConfig(false)} style={{padding:"10px 20px",borderRadius:"10px",border:`1px solid ${COL.border}`,background:"transparent",color:COL.textMuted,fontSize:"13px",fontWeight:600,cursor:"pointer",fontFamily:"'DM Sans',sans-serif"}}>Đóng</button>
             </div>
           </div>
