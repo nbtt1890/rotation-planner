@@ -163,7 +163,7 @@ function useFirebaseData(){
     if(!initRef.current){initRef.current=true;init();}
     return()=>{if(cu)cu();if(pu)pu();};
   },[]);
-  return{config,plan,setPlan,loading,connected,error,setEditing};
+  return{config,plan,setPlan,loading,connected,error,setEditing,lockPolling,unlockPolling};
 }
 
 /* ── Styles ── */
@@ -385,7 +385,7 @@ function ErrorScreen({error}){return(
 
 /* ── Main App ── */
 function App(){
-  const{config,plan:fbPlan,setPlan:setFbPlan,loading,connected,error,setEditing}=useFirebaseData();
+  const{config,plan:fbPlan,setPlan:setFbPlan,loading,connected,error,setEditing,lockPolling,unlockPolling}=useFirebaseData();
   const[showConfig,setShowConfig]=useState(false);
   const[showPassModal,setShowPassModal]=useState(false);
   const[isAdmin,setIsAdmin]=useState(false);
