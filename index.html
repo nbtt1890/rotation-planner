@@ -633,7 +633,7 @@ function App(){
           <StatCard label="Đã quay" value={stats.shot} sub={`${stats.shotPct}%`} icon="🎬"/>
           <StatCard label="Chưa quay" value={stats.total-stats.shot} icon="⏳"/>
           <StatCard label="Đã dựng" value={stats.edited} sub={`${stats.editPct}%`} icon="✅"/>
-          <StatCard label="Chưa dựng" value={stats.total-stats.edited} icon="🎞"/>
+          <StatCard label="Chưa dựng" value={stats.shot-stats.edited} icon="🎞"/>
         </div>
 
         {/* Tabs */}
