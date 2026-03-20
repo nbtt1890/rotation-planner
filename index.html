@@ -37,7 +37,7 @@ const fb = {
   async get(p){return(await fetch(FB_URL+"/"+p+".json")).json();},
   async set(p,d){await fetch(FB_URL+"/"+p+".json",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(d)});},
   async update(p,d){await fetch(FB_URL+"/"+p+".json",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(d)});},
-  listen(p,cb){fb.get(p).then(cb);const iv=setInterval(()=>fb.get(p).then(cb),3000);return()=>clearInterval(iv);}
+  listen(p,cb){fb.get(p).then(cb);const iv=setInterval(()=>fb.get(p).then(cb),5000);return()=>clearInterval(iv);}
 };
 
 /* ── Constants ── */
@@ -108,15 +108,28 @@ function useFirebaseData(){
   const initRef=useRef(false);
   const editingRef=useRef(false);
   const editTimerRef=useRef(null);
+  const writeCountRef=useRef(0);
 
-  const setEditing=(v)=>{
-    editingRef.current=v;
-    if(v){
-      // Keep editing lock for 5 seconds after last edit to let Firebase sync
-      if(editTimerRef.current)clearTimeout(editTimerRef.current);
-      editTimerRef.current=setTimeout(()=>{editingRef.current=false;},5000);
-    }
+  const lockPolling=()=>{
+    writeCountRef.current++;
+    editingRef.current=true;
+    if(editTimerRef.current)clearTimeout(editTimerRef.current);
   };
+
+  const unlockPolling=()=>{
+    writeCountRef.current=Math.max(0,writeCountRef.current-1);
+    // Only unlock after ALL pending writes are done + buffer time
+    if(editTimerRef.current)clearTimeout(editTimerRef.current);
+    editTimerRef.current=setTimeout(()=>{
+      if(writeCountRef.current<=0){
+        editingRef.current=false;
+        writeCountRef.current=0;
+      }
+    },3000);
+  };
+
+  // Legacy compat
+  const setEditing=(v)=>{if(v)lockPolling();else unlockPolling();};
 
   // Migrate old data format to new format
   function migrateRow(r){
@@ -483,9 +496,7 @@ function App(){
   },[editProducts,editConcepts,editKocs,plan,saveUndo]);
 
   const updateRowFb=useCallback(async(idx,field,value)=>{
-    await fb.update("plan/"+idx,{[field]:value});
-    // Keep editing lock a bit longer after write completes
-    setTimeout(()=>{setEditing(false);},2000);
+    try{await fb.update("plan/"+idx,{[field]:value});}finally{unlockPolling();}
   },[]);
 
   const debouncedUpdateFb=useDebounce(updateRowFb,800);
@@ -493,13 +504,11 @@ function App(){
   const updateRow=useCallback((id,field,value)=>{
     const idx=plan.findIndex(p=>p.id===id);
     if(idx===-1)return;
-    setEditing(true);
-    // Update local state immediately for responsive UI
+    lockPolling();
     const newPlan=[...plan];
     newPlan[idx]={...newPlan[idx],[field]:value};
     setFbPlan(newPlan);
     setModalRow(prev=>(prev&&prev.id===id?{...prev,[field]:value}:prev));
-    // Debounce the Firebase write
     debouncedUpdateFb(idx,field,value);
   },[plan,debouncedUpdateFb]);
 
@@ -507,26 +516,24 @@ function App(){
     const idx=plan.findIndex(p=>p.id===id);
     if(idx===-1)return;
     const ns=(plan[idx].shootStatus||"pending")==="pending"?"done":"pending";
-    setEditing(true);
+    lockPolling();
     const newPlan=[...plan];
     newPlan[idx]={...newPlan[idx],shootStatus:ns};
     setFbPlan(newPlan);
     setModalRow(prev=>(prev&&prev.id===id?{...prev,shootStatus:ns}:prev));
-    await fb.update("plan/"+idx,{shootStatus:ns});
-    setTimeout(()=>{setEditing(false);},2000);
+    try{await fb.update("plan/"+idx,{shootStatus:ns});}finally{unlockPolling();}
   },[plan]);
 
   const toggleEditStatus=useCallback(async(id)=>{
     const idx=plan.findIndex(p=>p.id===id);
     if(idx===-1)return;
     const ns=(plan[idx].editStatus||"pending")==="pending"?"done":"pending";
-    setEditing(true);
+    lockPolling();
     const newPlan=[...plan];
     newPlan[idx]={...newPlan[idx],editStatus:ns};
     setFbPlan(newPlan);
     setModalRow(prev=>(prev&&prev.id===id?{...prev,editStatus:ns}:prev));
-    await fb.update("plan/"+idx,{editStatus:ns});
-    setTimeout(()=>{setEditing(false);},2000);
+    try{await fb.update("plan/"+idx,{editStatus:ns});}finally{unlockPolling();}
   },[plan]);
 
   const cloneRow=useCallback(async(id,count)=>{
