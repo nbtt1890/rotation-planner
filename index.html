@@ -107,8 +107,16 @@ function useFirebaseData(){
   const [error,setError]=useState(null);
   const initRef=useRef(false);
   const editingRef=useRef(false);
+  const editTimerRef=useRef(null);
 
-  const setEditing=(v)=>{editingRef.current=v;};
+  const setEditing=(v)=>{
+    editingRef.current=v;
+    if(v){
+      // Keep editing lock for 5 seconds after last edit to let Firebase sync
+      if(editTimerRef.current)clearTimeout(editTimerRef.current);
+      editTimerRef.current=setTimeout(()=>{editingRef.current=false;},5000);
+    }
+  };
 
   // Migrate old data format to new format
   function migrateRow(r){
@@ -259,7 +267,7 @@ function DetailModal({row,onClose,onUpdate,onClone,onDelete,isAdmin,productColor
             <div>{lb("","Trạng thái dựng")}{isAdmin?<div style={{display:"flex",gap:"6px"}}>{["pending","done"].map(s=>(<button key={s} onClick={()=>onUpdate(row.id,"editStatus",s)} style={{padding:"7px 14px",borderRadius:"10px",border:`1px solid ${(row.editStatus||"pending")===s?(s==="done"?"rgba(56,189,248,0.3)":COL.borderActive):COL.border}`,background:(row.editStatus||"pending")===s?(s==="done"?"rgba(56,189,248,0.1)":COL.accentSoft):"transparent",color:(row.editStatus||"pending")===s?(s==="done"?COL.link:COL.accent):COL.textMuted,fontSize:"11px",fontWeight:600,cursor:"pointer",fontFamily:"'DM Sans',sans-serif"}}>{s==="done"?"Đã dựng":"Chưa dựng"}</button>))}</div>:<span style={{fontSize:"12px",color:(row.editStatus||"pending")==="done"?COL.link:COL.textDim}}>{(row.editStatus||"pending")==="done"?"Đã dựng":"Chưa dựng"}</span>}</div>
             <div>{lb("","Ngày dựng")}{isAdmin?<div style={{display:"flex",alignItems:"center",gap:"8px"}}><input type="date" value={row.editDate||""} onChange={e=>onUpdate(row.id,"editDate",e.target.value)} style={{...inpS,width:"140px",colorScheme:"dark"}}/>{row.editDate&&<span style={{fontSize:"12px",fontFamily:"'Space Mono',monospace",color:COL.text}}>{fmtDate(row.editDate)}</span>}</div>:<span style={{fontSize:"12px",fontFamily:"'Space Mono',monospace",color:row.editDate?COL.text:COL.textDim}}>{fmtDate(row.editDate)||"—"}</span>}</div>
           </div>
-          {isAdmin&&<button onClick={()=>{onClone(row.id);onClose();}} style={{padding:"10px",borderRadius:"10px",border:`1px dashed ${COL.accent}`,background:"transparent",color:COL.accent,fontSize:"12px",fontWeight:600,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",marginTop:"4px"}}>+ Thêm kịch bản mới cho tổ hợp này</button>}
+          {isAdmin&&<button onClick={()=>{const n=prompt("Thêm bao nhiêu kịch bản?","1");if(n&&parseInt(n)>0){onClone(row.id,parseInt(n));onClose();}}} style={{padding:"10px",borderRadius:"10px",border:`1px dashed ${COL.accent}`,background:"transparent",color:COL.accent,fontSize:"12px",fontWeight:600,cursor:"pointer",fontFamily:"'DM Sans',sans-serif",marginTop:"4px"}}>+ Thêm kịch bản mới cho tổ hợp này</button>}
           {isAdmin&&<button onClick={()=>onDelete(row.id)} style={{padding:"10px",borderRadius:"10px",border:"1px dashed rgba(239,68,68,0.4)",background:"transparent",color:"#ef4444",fontSize:"12px",fontWeight:600,cursor:"pointer",fontFamily:"'DM Sans',sans-serif"}}>🗑 Xoá dòng này</button>}
         </div>
       </div>
@@ -476,7 +484,8 @@ function App(){
 
   const updateRowFb=useCallback(async(idx,field,value)=>{
     await fb.update("plan/"+idx,{[field]:value});
-    setEditing(false);
+    // Keep editing lock a bit longer after write completes
+    setTimeout(()=>{setEditing(false);},2000);
   },[]);
 
   const debouncedUpdateFb=useDebounce(updateRowFb,800);
@@ -494,28 +503,42 @@ function App(){
     debouncedUpdateFb(idx,field,value);
   },[plan,debouncedUpdateFb]);
 
-  const toggleStatus=useCallback(async(id)=>{
+  const toggleShootStatus=useCallback(async(id)=>{
     const idx=plan.findIndex(p=>p.id===id);
     if(idx===-1)return;
-    const ns=plan[idx].status==="pending"?"done":"pending";
-    // Update local immediately
+    const ns=(plan[idx].shootStatus||"pending")==="pending"?"done":"pending";
+    setEditing(true);
     const newPlan=[...plan];
-    newPlan[idx]={...newPlan[idx],status:ns};
+    newPlan[idx]={...newPlan[idx],shootStatus:ns};
     setFbPlan(newPlan);
-    setModalRow(prev=>(prev&&prev.id===id?{...prev,status:ns}:prev));
-    // Sync to Firebase
-    await fb.update("plan/"+idx,{status:ns});
+    setModalRow(prev=>(prev&&prev.id===id?{...prev,shootStatus:ns}:prev));
+    await fb.update("plan/"+idx,{shootStatus:ns});
+    setTimeout(()=>{setEditing(false);},2000);
   },[plan]);
 
-  const cloneRow=useCallback(async(id)=>{
+  const toggleEditStatus=useCallback(async(id)=>{
+    const idx=plan.findIndex(p=>p.id===id);
+    if(idx===-1)return;
+    const ns=(plan[idx].editStatus||"pending")==="pending"?"done":"pending";
+    setEditing(true);
+    const newPlan=[...plan];
+    newPlan[idx]={...newPlan[idx],editStatus:ns};
+    setFbPlan(newPlan);
+    setModalRow(prev=>(prev&&prev.id===id?{...prev,editStatus:ns}:prev));
+    await fb.update("plan/"+idx,{editStatus:ns});
+    setTimeout(()=>{setEditing(false);},2000);
+  },[plan]);
+
+  const cloneRow=useCallback(async(id,count)=>{
     const src=plan.find(p=>p.id===id);
     if(!src)return;
-    saveUndo("Thêm KB cho #"+id);
-    const maxId=plan.reduce((m,p)=>Math.max(m,p.id||0),0);
-    const newRow={...src,id:maxId+1,script:"",scriptLink:"",shootStatus:"pending",shootDate:"",editStatus:"pending",editDate:"",status:"pending"};
+    const n=count||1;
+    saveUndo("Thêm "+n+" KB cho #"+id);
     const newPlan=[...plan];
     const idx=plan.findIndex(p=>p.id===id);
-    newPlan.splice(idx+1,0,newRow);
+    for(let i=0;i<n;i++){
+      newPlan.splice(idx+1+i,0,{...src,id:0,script:"",scriptLink:"",shootStatus:"pending",shootDate:"",editStatus:"pending",editDate:"",status:"pending"});
+    }
     newPlan.forEach((r,i)=>{r.id=i+1;});
     await fb.set("plan",newPlan);
   },[plan,saveUndo]);
@@ -668,7 +691,7 @@ function App(){
                         </div>
                       </td>
                       <td style={{padding:"12px 10px",borderBottom:`1px solid ${COL.border}`}}>
-                        {isAdmin?<span onClick={e=>{e.stopPropagation();updateRow(row.id,"shootStatus",row.shootStatus==="pending"?"done":"pending");}} style={{display:"inline-flex",alignItems:"center",gap:"5px",padding:"4px 10px",borderRadius:"20px",fontSize:"11px",fontWeight:600,background:row.shootStatus==="done"?COL.successSoft:"rgba(255,255,255,0.04)",color:row.shootStatus==="done"?COL.success:COL.textDim,border:`1px solid ${row.shootStatus==="done"?"rgba(52,211,153,0.2)":COL.border}`,transition:"all 0.2s",cursor:"pointer",whiteSpace:"nowrap"}}><span style={{width:"6px",height:"6px",borderRadius:"50%",background:row.shootStatus==="done"?COL.success:COL.textDim}}/>{row.shootStatus==="done"?"Đã quay":"Chưa quay"}</span>:<span style={{display:"inline-flex",alignItems:"center",gap:"5px",padding:"4px 10px",borderRadius:"20px",fontSize:"11px",fontWeight:600,background:row.shootStatus==="done"?COL.successSoft:"rgba(255,255,255,0.04)",color:row.shootStatus==="done"?COL.success:COL.textDim,border:`1px solid ${row.shootStatus==="done"?"rgba(52,211,153,0.2)":COL.border}`,whiteSpace:"nowrap"}}><span style={{width:"6px",height:"6px",borderRadius:"50%",background:row.shootStatus==="done"?COL.success:COL.textDim}}/>{row.shootStatus==="done"?"Đã quay":"Chưa quay"}</span>}
+                        {isAdmin?<span onClick={e=>{e.stopPropagation();toggleShootStatus(row.id);}} style={{display:"inline-flex",alignItems:"center",gap:"5px",padding:"4px 10px",borderRadius:"20px",fontSize:"11px",fontWeight:600,background:(row.shootStatus||"pending")==="done"?COL.successSoft:"rgba(255,255,255,0.04)",color:(row.shootStatus||"pending")==="done"?COL.success:COL.textDim,border:`1px solid ${(row.shootStatus||"pending")==="done"?"rgba(52,211,153,0.2)":COL.border}`,transition:"all 0.2s",cursor:"pointer",whiteSpace:"nowrap"}}><span style={{width:"6px",height:"6px",borderRadius:"50%",background:(row.shootStatus||"pending")==="done"?COL.success:COL.textDim}}/>{(row.shootStatus||"pending")==="done"?"Đã quay":"Chưa quay"}</span>:<span style={{display:"inline-flex",alignItems:"center",gap:"5px",padding:"4px 10px",borderRadius:"20px",fontSize:"11px",fontWeight:600,background:(row.shootStatus||"pending")==="done"?COL.successSoft:"rgba(255,255,255,0.04)",color:(row.shootStatus||"pending")==="done"?COL.success:COL.textDim,border:`1px solid ${(row.shootStatus||"pending")==="done"?"rgba(52,211,153,0.2)":COL.border}`,whiteSpace:"nowrap"}}><span style={{width:"6px",height:"6px",borderRadius:"50%",background:(row.shootStatus||"pending")==="done"?COL.success:COL.textDim}}/>{(row.shootStatus||"pending")==="done"?"Đã quay":"Chưa quay"}</span>}
                       </td>
                       <td style={{padding:"12px 10px",borderBottom:`1px solid ${COL.border}`,whiteSpace:"nowrap"}}>
                         {isAdmin?<div style={{display:"flex",alignItems:"center",gap:"6px"}}>
@@ -677,7 +700,7 @@ function App(){
                         </div>:<span style={{fontSize:"12px",fontFamily:"'Space Mono',monospace",color:row.shootDate?COL.text:COL.textDim}}>{fmtDate(row.shootDate)||"—"}</span>}
                       </td>
                       <td style={{padding:"12px 10px",borderBottom:`1px solid ${COL.border}`}}>
-                        {isAdmin?<span onClick={e=>{e.stopPropagation();updateRow(row.id,"editStatus",row.editStatus==="pending"?"done":"pending");}} style={{display:"inline-flex",alignItems:"center",gap:"5px",padding:"4px 10px",borderRadius:"20px",fontSize:"11px",fontWeight:600,background:row.editStatus==="done"?"rgba(56,189,248,0.1)":"rgba(255,255,255,0.04)",color:row.editStatus==="done"?COL.link:COL.textDim,border:`1px solid ${row.editStatus==="done"?"rgba(56,189,248,0.25)":COL.border}`,transition:"all 0.2s",cursor:"pointer",whiteSpace:"nowrap"}}><span style={{width:"6px",height:"6px",borderRadius:"50%",background:row.editStatus==="done"?COL.link:COL.textDim}}/>{row.editStatus==="done"?"Đã dựng":"Chưa dựng"}</span>:<span style={{display:"inline-flex",alignItems:"center",gap:"5px",padding:"4px 10px",borderRadius:"20px",fontSize:"11px",fontWeight:600,background:row.editStatus==="done"?"rgba(56,189,248,0.1)":"rgba(255,255,255,0.04)",color:row.editStatus==="done"?COL.link:COL.textDim,border:`1px solid ${row.editStatus==="done"?"rgba(56,189,248,0.25)":COL.border}`,whiteSpace:"nowrap"}}><span style={{width:"6px",height:"6px",borderRadius:"50%",background:row.editStatus==="done"?COL.link:COL.textDim}}/>{row.editStatus==="done"?"Đã dựng":"Chưa dựng"}</span>}
+                        {isAdmin?<span onClick={e=>{e.stopPropagation();toggleEditStatus(row.id);}} style={{display:"inline-flex",alignItems:"center",gap:"5px",padding:"4px 10px",borderRadius:"20px",fontSize:"11px",fontWeight:600,background:(row.editStatus||"pending")==="done"?"rgba(56,189,248,0.1)":"rgba(255,255,255,0.04)",color:(row.editStatus||"pending")==="done"?COL.link:COL.textDim,border:`1px solid ${(row.editStatus||"pending")==="done"?"rgba(56,189,248,0.25)":COL.border}`,transition:"all 0.2s",cursor:"pointer",whiteSpace:"nowrap"}}><span style={{width:"6px",height:"6px",borderRadius:"50%",background:(row.editStatus||"pending")==="done"?COL.link:COL.textDim}}/>{(row.editStatus||"pending")==="done"?"Đã dựng":"Chưa dựng"}</span>:<span style={{display:"inline-flex",alignItems:"center",gap:"5px",padding:"4px 10px",borderRadius:"20px",fontSize:"11px",fontWeight:600,background:(row.editStatus||"pending")==="done"?"rgba(56,189,248,0.1)":"rgba(255,255,255,0.04)",color:(row.editStatus||"pending")==="done"?COL.link:COL.textDim,border:`1px solid ${(row.editStatus||"pending")==="done"?"rgba(56,189,248,0.25)":COL.border}`,whiteSpace:"nowrap"}}><span style={{width:"6px",height:"6px",borderRadius:"50%",background:(row.editStatus||"pending")==="done"?COL.link:COL.textDim}}/>{(row.editStatus||"pending")==="done"?"Đã dựng":"Chưa dựng"}</span>}
                       </td>
                       <td style={{padding:"12px 10px",borderBottom:`1px solid ${COL.border}`,whiteSpace:"nowrap"}}>
                         {isAdmin?<div style={{display:"flex",alignItems:"center",gap:"6px"}}>
@@ -687,7 +710,7 @@ function App(){
                       </td>
                       <td style={{padding:"6px",borderBottom:`1px solid ${COL.border}`,textAlign:"center"}}>
                         {isAdmin&&<div style={{display:"flex",flexDirection:"column",gap:"3px",alignItems:"center"}}>
-                          <button onClick={e=>{e.stopPropagation();cloneRow(row.id);}} title="Thêm kịch bản cho tổ hợp này" style={{background:"none",border:`1px solid ${COL.border}`,borderRadius:"6px",padding:"3px 8px",color:COL.accent,fontSize:"13px",cursor:"pointer",transition:"all 0.2s",fontWeight:700,lineHeight:1,fontFamily:"'DM Sans',sans-serif"}}>+</button>
+                          <button onClick={e=>{e.stopPropagation();const n=prompt("Thêm bao nhiêu kịch bản?","1");if(n&&parseInt(n)>0)cloneRow(row.id,parseInt(n));}} title="Thêm kịch bản cho tổ hợp này" style={{background:"none",border:`1px solid ${COL.border}`,borderRadius:"6px",padding:"3px 8px",color:COL.accent,fontSize:"13px",cursor:"pointer",transition:"all 0.2s",fontWeight:700,lineHeight:1,fontFamily:"'DM Sans',sans-serif"}}>+</button>
                           <button onClick={e=>{e.stopPropagation();deleteRow(row.id);}} title="Xoá dòng này" style={{background:"none",border:`1px solid rgba(239,68,68,0.2)`,borderRadius:"6px",padding:"3px 8px",color:"#ef4444",fontSize:"11px",cursor:"pointer",transition:"all 0.2s",fontWeight:700,lineHeight:1,fontFamily:"'DM Sans',sans-serif"}}>×</button>
                         </div>}
                       </td>
