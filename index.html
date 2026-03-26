@@ -541,23 +541,28 @@ function App(){
     if(!src)return;
     const n=count||1;
     saveUndo("Thêm "+n+" KB cho #"+id);
+    lockPolling();
     const newPlan=[...plan];
     const idx=plan.findIndex(p=>p.id===id);
     for(let i=0;i<n;i++){
       newPlan.splice(idx+1+i,0,{...src,id:0,script:"",scriptLink:"",shootStatus:"pending",shootDate:"",editStatus:"pending",editDate:"",status:"pending"});
     }
     newPlan.forEach((r,i)=>{r.id=i+1;});
-    await fb.set("plan",newPlan);
+    // Update local immediately so user sees result
+    setFbPlan([...newPlan]);
+    try{await fb.set("plan",newPlan);}finally{unlockPolling();}
   },[plan,saveUndo]);
 
   const deleteRow=useCallback(async(id)=>{
     if(!isAdmin){setShowPassModal(true);return;}
     if(!confirm("Xoá dòng #"+id+"?"))return;
     saveUndo("Xoá dòng #"+id);
+    lockPolling();
     const newPlan=plan.filter(p=>p.id!==id);
     newPlan.forEach((r,i)=>{r.id=i+1;});
-    await fb.set("plan",newPlan);
+    setFbPlan([...newPlan]);
     setModalRow(null);
+    try{await fb.set("plan",newPlan);}finally{unlockPolling();}
   },[plan,isAdmin,saveUndo]);
 
   const filteredPlan=useMemo(()=>{
