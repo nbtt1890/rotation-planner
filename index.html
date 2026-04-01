@@ -411,10 +411,14 @@ function OcrScanner({plan,onApply,onClose}){
       }
 
       lines.forEach(line=>{
-        const clean=line.replace(/[|[\]{}]/g,"").trim();
+        // Strip icon garbage, common OCR artifacts at start of line
+        let clean=line.replace(/[|[\]{}]/g,"").trim();
+        // Remove common OCR icon misreads at start: "4B ", "TB ", "aB ", etc (file icons)
+        clean=clean.replace(/^[^A-Z]*(?=[A-Z])/i,"");
 
-        // Try to extract filename: MASP_KB/NUM_DATECODE.mp4
-        const fileMatch=clean.match(/([A-Z][A-Z0-9]*)[_\s]+([A-Z]*\d+)[_\s]+(\d{4,8})\s*\.?\s*mp4?/i);
+        // Try to find the .mp4 filename pattern anywhere in the line
+        // Flexible: allow OCR spaces/garbage between parts
+        const fileMatch=clean.match(/([A-Z][A-Z0-9]*)\s*[_\s]+\s*([A-Z]*\d+)\s*[_\s]+\s*(\d{4,8})\s*\.?\s*mp4?/i);
         if(!fileMatch) return;
 
         const product=fileMatch[1].toUpperCase();
@@ -611,8 +615,8 @@ function App(){
   const[editProducts,setEditProducts]=useState(null);
   const[editConcepts,setEditConcepts]=useState(null);
   const[editKocs,setEditKocs]=useState(null);
-  const[undoStack,setUndoStack]=useState(()=>{try{const s=sessionStorage.getItem("undoStack");return s?JSON.parse(s):[];}catch(e){return[];}});
-  useEffect(()=>{try{sessionStorage.setItem("undoStack",JSON.stringify(undoStack.slice(0,5)));}catch(e){}},[undoStack]);
+  const[undoStack,setUndoStack]=useState(()=>{try{const s=sessionStorage.getItem("cs_undo");return s?JSON.parse(s):[];}catch(e){return[];}});
+  useEffect(()=>{try{const d=JSON.stringify(undoStack.slice(0,3));if(d.length<4000000)sessionStorage.setItem("cs_undo",d);else sessionStorage.removeItem("cs_undo");}catch(e){try{sessionStorage.removeItem("cs_undo");}catch(e2){}}},[undoStack]);
   const MAX_UNDO=20;
 
   const products=config?.products||DEMO_PRODUCTS;
