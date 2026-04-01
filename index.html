@@ -439,35 +439,43 @@ function OcrScanner({plan,onApply,onClose}){
           shootDate=normalizeDateCode(dateCode);
         }
 
-        if(!files.find(f=>f.script===scriptKey)){
-          files.push({product,script:scriptKey,editDate,shootDate,raw:clean.replace(/\s+/g," ").slice(0,60)});
+        const scriptKeyShort=product+"_"+kbPart;
+        const scriptKeyFull=product+"_"+kbPart+"_"+dateCode;
+
+        if(!files.find(f=>f.scriptFull===scriptKeyFull)){
+          files.push({product,script:scriptKeyShort,scriptFull:scriptKeyFull,dateCode,editDate,shootDate,raw:clean.replace(/\s+/g," ").slice(0,60)});
         }
       });
 
       // Also do a global regex scan to catch anything missed
-      const globalRegex=/([A-Z0-9]+)[_\s]+([A-Z]*\d+)[_\s]+(\d{4,8})\s*\.?\s*mp4?/gi;
+      const globalRegex=/([A-Z][A-Z0-9]*)[_\s]+([A-Z]*\d+)[_\s]+(\d{4,8})\s*\.?\s*mp4?/gi;
       let gm;
       while((gm=globalRegex.exec(text))!==null){
         const prod=gm[1].toUpperCase();
-        const scriptKey=prod+"_"+gm[2].toUpperCase();
-        if(!files.find(f=>f.script===scriptKey)){
-          files.push({product:prod,script:scriptKey,editDate:"",raw:gm[0]});
+        const kb=gm[2].toUpperCase();
+        const dc=gm[3];
+        const skFull=prod+"_"+kb+"_"+dc;
+        if(!files.find(f=>f.scriptFull===skFull)){
+          files.push({product:prod,script:prod+"_"+kb,scriptFull:skFull,dateCode:dc,editDate:"",shootDate:normalizeDateCode(dc),raw:gm[0]});
         }
       }
 
-      // Match against plan
+      // Match against plan - try multiple formats
       const matched=[];
       const unmatched=[];
       files.forEach(f=>{
-        // Try exact match: product + script
-        let row=plan.find(p=>p.product===f.product&&p.script===f.script&&(p.editStatus||"pending")!=="done");
-        // Try script only
+        let row=null;
+        // 1. Full match: EP4_KB1_11326
+        row=plan.find(p=>p.script===f.scriptFull&&(p.editStatus||"pending")!=="done");
+        // 2. Short match: EP4_KB1
         if(!row) row=plan.find(p=>p.script===f.script&&(p.editStatus||"pending")!=="done");
-        // Try matching with "KB" prefix added (e.g. file has "1" but plan has "KB1")
+        // 3. Script starts with short key
+        if(!row) row=plan.find(p=>p.product===f.product&&p.script&&p.script.startsWith(f.script+"_")&&(p.editStatus||"pending")!=="done");
+        // 4. Try with KB prefix: file "1" → "KB1"
         if(!row){
-          const altScript=f.product+"_KB"+f.script.split("_").pop();
-          row=plan.find(p=>p.script===altScript&&(p.editStatus||"pending")!=="done");
-          if(row) f.script=altScript;
+          const altShort=f.product+"_KB"+f.script.split("_").pop();
+          const altFull=altShort+"_"+f.dateCode;
+          row=plan.find(p=>(p.script===altFull||p.script===altShort)&&(p.editStatus||"pending")!=="done");
         }
         if(row){matched.push({...f,rowId:row.id,rowIdx:plan.findIndex(p=>p.id===row.id)});}
         else{unmatched.push(f);}
@@ -535,8 +543,8 @@ function OcrScanner({plan,onApply,onClose}){
             <div style={{fontSize:"11px",fontWeight:600,textTransform:"uppercase",color:COL.success,marginBottom:"6px"}}>✅ Sẽ tick "Đã dựng" ({parsed.matched.length})</div>
             <div style={{maxHeight:"150px",overflowY:"auto",display:"flex",flexDirection:"column",gap:"3px"}}>
               {parsed.matched.map((m,i)=><div key={i} style={{fontSize:"11px",fontFamily:"'Space Mono',monospace",color:COL.text,padding:"4px 8px",background:"rgba(52,211,153,0.06)",borderRadius:"4px",display:"flex",justifyContent:"space-between",gap:"8px"}}>
-                <span>#{m.rowId} · {m.script}</span>
-                <span style={{color:COL.textMuted}}>{m.shootDate?("Quay:"+fmtDate(m.shootDate)):""}  {m.editDate?("Dựng:"+fmtDate(m.editDate)):""}</span>
+                <span>#{m.rowId} · {m.scriptFull||m.script}</span>
+                <span style={{color:COL.textMuted}}>{m.shootDate?("Q:"+fmtDate(m.shootDate)):""}  {m.editDate?("D:"+fmtDate(m.editDate)):""}</span>
               </div>)}
             </div>
           </div>}
