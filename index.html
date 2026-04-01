@@ -29,16 +29,32 @@ input[type="date"]::-webkit-calendar-picker-indicator{filter:invert(0.7);cursor:
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.26.5/babel.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script>
+firebase.initializeApp({
+  apiKey:"AIzaSyBxDpORZq82X2zWRniOpGH4IxTW53FIArc",
+  authDomain:"comme-studio.firebaseapp.com",
+  databaseURL:"https://comme-studio-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId:"comme-studio",
+  storageBucket:"comme-studio.firebasestorage.app",
+  messagingSenderId:"717710093856",
+  appId:"1:717710093856:web:8572585bfdbea74b115645"
+});
+window.fbDb=firebase.database();
+</script>
 <script type="text/babel">
 const { useState, useMemo, useCallback, useRef, useEffect } = React;
 
-/* ── Firebase REST ── */
-const FB_URL = "https://comme-studio-default-rtdb.asia-southeast1.firebasedatabase.app";
-const fb = {
-  async get(p){return(await fetch(FB_URL+"/"+p+".json")).json();},
-  async set(p,d){await fetch(FB_URL+"/"+p+".json",{method:"PUT",headers:{"Content-Type":"application/json"},body:JSON.stringify(d)});},
-  async update(p,d){await fetch(FB_URL+"/"+p+".json",{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify(d)});},
-  listen(p,cb){fb.get(p).then(cb);const iv=setInterval(()=>fb.get(p).then(cb),5000);return()=>clearInterval(iv);}
+/* ── Firebase SDK helpers ── */
+const db={
+  ref:(p)=>window.fbDb.ref(p),
+  async get(p){const s=await window.fbDb.ref(p).once("value");return s.val();},
+  set(p,d){return window.fbDb.ref(p).set(d);},
+  update(p,d){return window.fbDb.ref(p).update(d);},
+  onValue(p,cb){window.fbDb.ref(p).on("value",snap=>cb(snap.val()));return()=>window.fbDb.ref(p).off("value");},
+  push(p,d){return window.fbDb.ref(p).push(d);},
+  remove(p){return window.fbDb.ref(p).remove();}
 };
 
 /* ── Constants ── */
@@ -99,7 +115,7 @@ function useDebounce(fn,delay){
   return cb;
 }
 
-/* ── Firebase hook ── */
+/* ── Firebase hook with SDK realtime ── */
 function useFirebaseData(){
   const [config,setConfig]=useState(null);
   const [plan,setPlan]=useState(null);
@@ -107,64 +123,59 @@ function useFirebaseData(){
   const [connected,setConnected]=useState(false);
   const [error,setError]=useState(null);
   const initRef=useRef(false);
-  const editingRef=useRef(false);
-  const editTimerRef=useRef(null);
-  const writeCountRef=useRef(0);
 
-  const lockPolling=()=>{
-    writeCountRef.current++;
-    editingRef.current=true;
-    if(editTimerRef.current)clearTimeout(editTimerRef.current);
-  };
-
-  const unlockPolling=()=>{
-    writeCountRef.current=Math.max(0,writeCountRef.current-1);
-    // Only unlock after ALL pending writes are done + buffer time
-    if(editTimerRef.current)clearTimeout(editTimerRef.current);
-    editTimerRef.current=setTimeout(()=>{
-      if(writeCountRef.current<=0){
-        editingRef.current=false;
-        writeCountRef.current=0;
-      }
-    },3000);
-  };
-
-  // Legacy compat
-  const setEditing=(v)=>{if(v)lockPolling();else unlockPolling();};
-
-  // Migrate old data format to new format
   function migrateRow(r){
     if(!r) return r;
     const m={...r};
-    // Map old "status" to "shootStatus" if shootStatus missing
-    if(!m.shootStatus && m.status){m.shootStatus=m.status;}
-    if(!m.shootStatus) m.shootStatus="pending";
-    if(!m.editStatus) m.editStatus="pending";
-    if(!m.editDate) m.editDate="";
-    if(!m.shootDate) m.shootDate="";
+    if(!m.shootStatus&&m.status){m.shootStatus=m.status;}
+    if(!m.shootStatus)m.shootStatus="pending";
+    if(!m.editStatus)m.editStatus="pending";
+    if(!m.editDate)m.editDate="";
+    if(!m.shootDate)m.shootDate="";
     return m;
   }
 
   useEffect(()=>{
-    let cu,pu;
+    if(initRef.current)return;
+    initRef.current=true;
+    let unsubs=[];
+
+    // Connection status
+    const connRef=window.fbDb.ref(".info/connected");
+    connRef.on("value",snap=>setConnected(!!snap.val()));
+    unsubs.push(()=>connRef.off("value"));
+
     async function init(){
       try{
-        const t=await fetch(FB_URL+"/.json?shallow=true");
-        if(!t.ok)throw new Error("Firebase connection failed");
-        setConnected(true);
-        const ec=await fb.get("config");
-        const ep=await fb.get("plan");
-        if(!ec){await fb.set("config",{products:DEMO_PRODUCTS,concepts:DEMO_CONCEPTS,kocs:DEMO_KOCS});}
-        if(!ep){const cfg=ec||{products:DEMO_PRODUCTS,concepts:DEMO_CONCEPTS,kocs:DEMO_KOCS};await fb.set("plan",genPlan(cfg.products,cfg.concepts,cfg.kocs));}
-        cu=fb.listen("config",d=>{if(d)setConfig(d);});
-        pu=fb.listen("plan",d=>{if(d&&!editingRef.current){const a=Array.isArray(d)?d.filter(Boolean):Object.values(d).filter(Boolean);setPlan(a.map(migrateRow));}});
+        const ec=await db.get("config");
+        const ep=await db.get("plan");
+        if(!ec)await db.set("config",{products:DEMO_PRODUCTS,concepts:DEMO_CONCEPTS,kocs:DEMO_KOCS});
+        if(!ep){const cfg=ec||{products:DEMO_PRODUCTS,concepts:DEMO_CONCEPTS,kocs:DEMO_KOCS};await db.set("plan",genPlan(cfg.products,cfg.concepts,cfg.kocs));}
+
+        // Realtime listeners — instant updates, no polling
+        const unsConfig=db.onValue("config",d=>{if(d)setConfig(d);});
+        unsubs.push(unsConfig);
+
+        const unsPlan=db.onValue("plan",d=>{
+          if(d){
+            const a=Array.isArray(d)?d.filter(Boolean):Object.values(d).filter(Boolean);
+            setPlan(a.map(migrateRow));
+          }
+        });
+        unsubs.push(unsPlan);
+
         setLoading(false);
-      }catch(e){console.error(e);setError(e.message);setConnected(false);setLoading(false);}
+      }catch(e){
+        console.error(e);
+        setError(e.message);
+        setLoading(false);
+      }
     }
-    if(!initRef.current){initRef.current=true;init();}
-    return()=>{if(cu)cu();if(pu)pu();};
+    init();
+    return()=>unsubs.forEach(u=>u());
   },[]);
-  return{config,plan,setPlan,loading,connected,error,setEditing,lockPolling,unlockPolling};
+
+  return{config,plan,setPlan,loading,connected,error};
 }
 
 /* ── Styles ── */
@@ -186,7 +197,7 @@ function StatCard({label,value,sub,icon}){return(
 function ConnectionStatus({connected}){return(
   <div style={{display:"flex",alignItems:"center",gap:"6px",padding:"4px 12px",borderRadius:"20px",fontSize:"11px",fontWeight:600,background:connected?"rgba(52,211,153,0.08)":"rgba(251,191,36,0.08)",color:connected?COL.success:COL.warning,border:`1px solid ${connected?"rgba(52,211,153,0.2)":"rgba(251,191,36,0.2)"}`}}>
     <span style={{width:"6px",height:"6px",borderRadius:"50%",background:connected?COL.success:COL.warning,animation:connected?"none":"pulse 1.5s infinite"}}/>
-    {connected?"Đã kết nối · Sync 3s":"Đang kết nối..."}
+    {connected?"Đã kết nối · Realtime":"Đang kết nối..."}
   </div>
 );}
 
@@ -609,7 +620,7 @@ function ErrorScreen({error}){return(
 
 /* ── Main App ── */
 function App(){
-  const{config,plan:fbPlan,setPlan:setFbPlan,loading,connected,error,setEditing,lockPolling,unlockPolling}=useFirebaseData();
+  const{config,plan:fbPlan,setPlan:setFbPlan,loading,connected,error}=useFirebaseData();
   const[showConfig,setShowConfig]=useState(false);
   const[showPassModal,setShowPassModal]=useState(false);
   const[showOcr,setShowOcr]=useState(false);
@@ -645,8 +656,8 @@ function App(){
     if(!undoStack.length)return;
     const snap=undoStack[0];
     if(!confirm("Hoàn tác: \""+snap.label+"\"?"))return;
-    if(snap.config)await fb.set("config",snap.config);
-    await fb.set("plan",snap.plan);
+    if(snap.config)await db.set("config",snap.config);
+    await db.set("plan",snap.plan);
     setUndoStack(prev=>prev.slice(1));
     setModalRow(null);
   },[undoStack]);
@@ -716,13 +727,13 @@ function App(){
     const merged=[...kept,...added];
     merged.forEach((r,i)=>{r.id=i+1;});
 
-    await fb.set("config",{products:editProducts,concepts:editConcepts,kocs:editKocs});
-    await fb.set("plan",merged);
+    await db.set("config",{products:editProducts,concepts:editConcepts,kocs:editKocs});
+    await db.set("plan",merged);
     setShowConfig(false);
   },[editProducts,editConcepts,editKocs,plan,saveUndo]);
 
   const updateRowFb=useCallback(async(idx,field,value)=>{
-    try{await fb.update("plan/"+idx,{[field]:value});}finally{unlockPolling();}
+    await db.update("plan/"+idx,{[field]:value});
   },[]);
 
   const debouncedUpdateFb=useDebounce(updateRowFb,800);
@@ -730,10 +741,7 @@ function App(){
   const updateRow=useCallback((id,field,value)=>{
     const idx=plan.findIndex(p=>p.id===id);
     if(idx===-1)return;
-    lockPolling();
-    const newPlan=[...plan];
-    newPlan[idx]={...newPlan[idx],[field]:value};
-    setFbPlan(newPlan);
+    // Firebase SDK onValue will auto-update state, but we also update modal immediately
     setModalRow(prev=>(prev&&prev.id===id?{...prev,[field]:value}:prev));
     debouncedUpdateFb(idx,field,value);
   },[plan,debouncedUpdateFb]);
@@ -742,24 +750,16 @@ function App(){
     const idx=plan.findIndex(p=>p.id===id);
     if(idx===-1)return;
     const ns=(plan[idx].shootStatus||"pending")==="pending"?"done":"pending";
-    lockPolling();
-    const newPlan=[...plan];
-    newPlan[idx]={...newPlan[idx],shootStatus:ns};
-    setFbPlan(newPlan);
     setModalRow(prev=>(prev&&prev.id===id?{...prev,shootStatus:ns}:prev));
-    try{await fb.update("plan/"+idx,{shootStatus:ns});}finally{unlockPolling();}
+    await db.update("plan/"+idx,{shootStatus:ns});
   },[plan]);
 
   const toggleEditStatus=useCallback(async(id)=>{
     const idx=plan.findIndex(p=>p.id===id);
     if(idx===-1)return;
     const ns=(plan[idx].editStatus||"pending")==="pending"?"done":"pending";
-    lockPolling();
-    const newPlan=[...plan];
-    newPlan[idx]={...newPlan[idx],editStatus:ns};
-    setFbPlan(newPlan);
     setModalRow(prev=>(prev&&prev.id===id?{...prev,editStatus:ns}:prev));
-    try{await fb.update("plan/"+idx,{editStatus:ns});}finally{unlockPolling();}
+    await db.update("plan/"+idx,{editStatus:ns});
   },[plan]);
 
   const cloneRow=useCallback(async(id,count)=>{
@@ -767,47 +767,43 @@ function App(){
     if(!src)return;
     const n=count||1;
     saveUndo("Thêm "+n+" KB cho #"+id);
-    lockPolling();
     const newPlan=[...plan];
     const idx=plan.findIndex(p=>p.id===id);
     for(let i=0;i<n;i++){
       newPlan.splice(idx+1+i,0,{...src,id:0,script:"",scriptLink:"",shootStatus:"pending",shootDate:"",editStatus:"pending",editDate:"",status:"pending"});
     }
     newPlan.forEach((r,i)=>{r.id=i+1;});
-    // Update local immediately so user sees result
-    setFbPlan([...newPlan]);
-    try{await fb.set("plan",newPlan);}finally{unlockPolling();}
+    await db.set("plan",newPlan);
   },[plan,saveUndo]);
 
   const deleteRow=useCallback(async(id)=>{
     if(!isAdmin){setShowPassModal(true);return;}
     if(!confirm("Xoá dòng #"+id+"?"))return;
     saveUndo("Xoá dòng #"+id);
-    lockPolling();
     const newPlan=plan.filter(p=>p.id!==id);
     newPlan.forEach((r,i)=>{r.id=i+1;});
-    setFbPlan([...newPlan]);
     setModalRow(null);
-    try{await fb.set("plan",newPlan);}finally{unlockPolling();}
+    await db.set("plan",newPlan);
   },[plan,isAdmin,saveUndo]);
 
   const ocrApply=useCallback(async(matched)=>{
     if(!matched.length)return;
     saveUndo("OCR: tick "+matched.length+" dòng Đã dựng");
-    lockPolling();
-    const newPlan=[...plan];
     const today=new Date().toISOString().split("T")[0];
+    // Use individual updates for each row — no conflict with other users
+    const updates={};
     matched.forEach(m=>{
-      const idx=newPlan.findIndex(p=>p.id===m.rowId);
+      const idx=plan.findIndex(p=>p.id===m.rowId);
       if(idx!==-1){
-        const updates={editStatus:"done",editDate:m.editDate||today};
-        // Also update shootDate if we got it from filename and row doesn't have one yet
-        if(m.shootDate&&!newPlan[idx].shootDate){updates.shootDate=m.shootDate;updates.shootStatus="done";}
-        newPlan[idx]={...newPlan[idx],...updates};
+        updates["plan/"+idx+"/editStatus"]="done";
+        updates["plan/"+idx+"/editDate"]=m.editDate||today;
+        if(m.shootDate&&!plan[idx].shootDate){
+          updates["plan/"+idx+"/shootDate"]=m.shootDate;
+          updates["plan/"+idx+"/shootStatus"]="done";
+        }
       }
     });
-    setFbPlan([...newPlan]);
-    try{await fb.set("plan",newPlan);}finally{unlockPolling();}
+    await window.fbDb.ref().update(updates);
   },[plan,saveUndo]);
 
   const filteredPlan=useMemo(()=>{
