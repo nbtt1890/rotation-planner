@@ -322,7 +322,7 @@ function TrackingMatrix({plan,products,concepts,kocs}){
       <div style={{overflowX:"auto",WebkitOverflowScrolling:"touch",borderRadius:"12px",border:`1px solid ${COL.border}`}}>
         <table style={{width:"100%",borderCollapse:"collapse",fontSize:"13px",minWidth:"500px"}}>
           <thead><tr style={{background:COL.surface}}>
-            <th style={{padding:"12px 16px",textAlign:"left",color:COL.textMuted,fontWeight:600,fontSize:"11px",textTransform:"uppercase",letterSpacing:"0.06em",borderBottom:`1px solid ${COL.border}`}}>KOC</th>
+            <th style={{padding:"12px 16px",textAlign:"left",color:COL.textMuted,fontWeight:600,fontSize:"11px",textTransform:"uppercase",letterSpacing:"0.06em",borderBottom:`1px solid ${COL.border}`,position:"sticky",left:0,background:COL.surface,zIndex:2}}>KOC</th>
             {items.map((item,i)=><th key={item} style={{padding:"10px 12px",textAlign:"center",borderBottom:`1px solid ${COL.border}`,borderLeft:`1px solid ${COL.border}`,verticalAlign:"bottom",minWidth:"80px"}}>
               <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:"4px"}}>
                 {dim==="product"&&linkMap[item]?<a href={linkMap[item]} target="_blank" rel="noopener noreferrer" style={{textDecoration:"none"}}><Tag label={item} colorIndex={i}/></a>:<Tag label={item} colorIndex={i}/>}
@@ -332,7 +332,7 @@ function TrackingMatrix({plan,products,concepts,kocs}){
           </tr></thead>
           <tbody>{dKocs.map((koc,kIdx)=>(
             <tr key={koc} style={{background:kIdx%2===0?"transparent":"rgba(255,255,255,0.01)"}}>
-              <td style={{padding:"12px 16px",fontWeight:600,color:COL.text,borderBottom:`1px solid ${COL.border}`,whiteSpace:"nowrap"}}>{koc}</td>
+              <td style={{padding:"12px 16px",fontWeight:600,color:COL.text,borderBottom:`1px solid ${COL.border}`,whiteSpace:"nowrap",position:"sticky",left:0,background:kIdx%2===0?COL.bg:"#0c0c14",zIndex:1}}>{koc}</td>
               {items.map(item=>{const{count,total}=matrix[koc]?.[item]||{count:0,total:0};const pct=total>0?count/total:0;return(
                 <td key={item} style={{padding:"12px 16px",textAlign:"center",borderBottom:`1px solid ${COL.border}`,borderLeft:`1px solid ${COL.border}`}}>
                   <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:"8px"}}>
@@ -374,47 +374,69 @@ function OcrScanner({plan,onApply,onClose}){
       await worker.terminate();
 
       // Parse filenames and dates from OCR text
-      // Formats: AHA5_1_18326.mp4  25-Mar-26 11:37
-      //          ISN_KB1_18326.mp4  20-Mar-26 09:37
-      //          GDHL3_KB1_270326.mp4
       const lines=text.split(/\n/).map(l=>l.trim()).filter(Boolean);
       const files=[];
 
       // Month name to number
       const monthMap={jan:"01",feb:"02",mar:"03",apr:"04",may:"05",jun:"06",jul:"07",aug:"08",sep:"09",oct:"10",nov:"11",dec:"12"};
 
-      // Parse date like "25-Mar-26" to "2026-03-25"
-      function parseDate(str){
+      // Parse date like "25-Mar-26", "25 Mar 26", "25-Mar-2026" to "2026-03-25"
+      function parseDateStr(str){
         if(!str)return"";
-        const m=str.match(/(\d{1,2})[- ](\w{3})[- ](\d{2,4})/i);
+        // Try "25-Mar-26" or "25 Mar 2026"
+        const m=str.match(/(\d{1,2})[- /.]+(\w{3,9})[- /.]+(\d{2,4})/i);
         if(m){
           const day=m[1].padStart(2,"0");
-          const mon=monthMap[m[2].toLowerCase().slice(0,3)]||"01";
+          const mon=monthMap[m[2].toLowerCase().slice(0,3)];
+          if(!mon)return"";
           let year=m[3];if(year.length===2)year="20"+year;
           return year+"-"+mon+"-"+day;
         }
         return"";
       }
 
+      // Normalize file date codes: 24326 → unclear, 240326 → 24/03/26, 2432026 → 24/3/2026, 24032026 → 24/03/2026
+      function normalizeDateCode(code){
+        if(!code)return"";
+        const s=code.replace(/\D/g,"");
+        // 8 digits: DDMMYYYY
+        if(s.length===8){return s.slice(4)+"-"+s.slice(2,4)+"-"+s.slice(0,2);}
+        // 7 digits: DMMYYYY or DDMYYYY — ambiguous, try DDMYYYY
+        if(s.length===7){return s.slice(3)+"-"+s.slice(1,3).padStart(2,"0")+"-"+s.slice(0,1).padStart(2,"0");}
+        // 6 digits: DDMMYY
+        if(s.length===6){return"20"+s.slice(4)+"-"+s.slice(2,4)+"-"+s.slice(0,2);}
+        // 5 digits: DMMYY
+        if(s.length===5){return"20"+s.slice(3)+"-"+s.slice(1,3)+"-"+"0"+s.slice(0,1);}
+        return"";
+      }
+
       lines.forEach(line=>{
-        // Clean OCR artifacts
         const clean=line.replace(/[|[\]{}]/g,"").trim();
 
-        // Try to extract filename: MASP_KB/NUM_DATE.mp4
-        const fileMatch=clean.match(/([A-Z0-9]+)[_\s]+([A-Z]*\d+)[_\s]+(\d{4,8})\s*\.?\s*mp4?/i);
+        // Try to extract filename: MASP_KB/NUM_DATECODE.mp4
+        const fileMatch=clean.match(/([A-Z][A-Z0-9]*)[_\s]+([A-Z]*\d+)[_\s]+(\d{4,8})\s*\.?\s*mp4?/i);
         if(!fileMatch) return;
 
         const product=fileMatch[1].toUpperCase();
         const kbPart=fileMatch[2].toUpperCase();
-        // Normalize: if it's just a number like "1", convert to "KB1" for matching
         const scriptKey=product+"_"+kbPart;
+        const dateCode=fileMatch[3];
 
-        // Try to extract date from the same line: 25-Mar-26 or similar
-        const dateMatch=clean.match(/(\d{1,2})[- ](Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[- ](\d{2,4})/i);
-        const editDate=dateMatch?parseDate(dateMatch[0]):"";
+        // Date in text column (e.g. "26-Mar-26") = ngày dựng
+        const dateTextMatch=clean.match(/(\d{1,2})[- /.](Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*[- /.]+(\d{2,4})/i);
+        let editDate="";
+        if(dateTextMatch){
+          editDate=parseDateStr(dateTextMatch[0]);
+        }
+
+        // Date code in filename (e.g. 11326) = ngày quay
+        let shootDate="";
+        if(dateCode){
+          shootDate=normalizeDateCode(dateCode);
+        }
 
         if(!files.find(f=>f.script===scriptKey)){
-          files.push({product,script:scriptKey,editDate,raw:clean.replace(/\s+/g," ").slice(0,60)});
+          files.push({product,script:scriptKey,editDate,shootDate,raw:clean.replace(/\s+/g," ").slice(0,60)});
         }
       });
 
@@ -508,9 +530,9 @@ function OcrScanner({plan,onApply,onClose}){
           {parsed.matched.length>0&&<div style={{marginBottom:"12px"}}>
             <div style={{fontSize:"11px",fontWeight:600,textTransform:"uppercase",color:COL.success,marginBottom:"6px"}}>✅ Sẽ tick "Đã dựng" ({parsed.matched.length})</div>
             <div style={{maxHeight:"150px",overflowY:"auto",display:"flex",flexDirection:"column",gap:"3px"}}>
-              {parsed.matched.map((m,i)=><div key={i} style={{fontSize:"11px",fontFamily:"'Space Mono',monospace",color:COL.text,padding:"4px 8px",background:"rgba(52,211,153,0.06)",borderRadius:"4px",display:"flex",justifyContent:"space-between"}}>
+              {parsed.matched.map((m,i)=><div key={i} style={{fontSize:"11px",fontFamily:"'Space Mono',monospace",color:COL.text,padding:"4px 8px",background:"rgba(52,211,153,0.06)",borderRadius:"4px",display:"flex",justifyContent:"space-between",gap:"8px"}}>
                 <span>#{m.rowId} · {m.script}</span>
-                {m.editDate&&<span style={{color:COL.textMuted}}>{fmtDate(m.editDate)}</span>}
+                <span style={{color:COL.textMuted}}>{m.shootDate?("Quay:"+fmtDate(m.shootDate)):""}  {m.editDate?("Dựng:"+fmtDate(m.editDate)):""}</span>
               </div>)}
             </div>
           </div>}
@@ -589,7 +611,8 @@ function App(){
   const[editProducts,setEditProducts]=useState(null);
   const[editConcepts,setEditConcepts]=useState(null);
   const[editKocs,setEditKocs]=useState(null);
-  const[undoStack,setUndoStack]=useState([]);
+  const[undoStack,setUndoStack]=useState(()=>{try{const s=sessionStorage.getItem("undoStack");return s?JSON.parse(s):[];}catch(e){return[];}});
+  useEffect(()=>{try{sessionStorage.setItem("undoStack",JSON.stringify(undoStack.slice(0,5)));}catch(e){}},[undoStack]);
   const MAX_UNDO=20;
 
   const products=config?.products||DEMO_PRODUCTS;
@@ -764,7 +787,12 @@ function App(){
     const today=new Date().toISOString().split("T")[0];
     matched.forEach(m=>{
       const idx=newPlan.findIndex(p=>p.id===m.rowId);
-      if(idx!==-1){newPlan[idx]={...newPlan[idx],editStatus:"done",editDate:m.editDate||today};}
+      if(idx!==-1){
+        const updates={editStatus:"done",editDate:m.editDate||today};
+        // Also update shootDate if we got it from filename and row doesn't have one yet
+        if(m.shootDate&&!newPlan[idx].shootDate){updates.shootDate=m.shootDate;updates.shootStatus="done";}
+        newPlan[idx]={...newPlan[idx],...updates};
+      }
     });
     setFbPlan([...newPlan]);
     try{await fb.set("plan",newPlan);}finally{unlockPolling();}
@@ -780,8 +808,20 @@ function App(){
       if(filterStatus==="edit-pending"&&(p.editStatus||"pending")!=="pending")return false;
       if(filterStatus==="edit-done"&&(p.editStatus||"pending")!=="done")return false;
       if(q){
-        const haystack=[p.product,p.productFullName||"",p.koc,p.concept,p.script||"",fmtDate(p.shootDate),p.shootDate||"",fmtDate(p.editDate),p.editDate||""].join(" ").toLowerCase();
-        if(!haystack.includes(q))return false;
+        // Check for date range: "15/03/2026 - 23/03/2026" or "15/03/2026-23/03/2026"
+        const rangeMatch=q.match(/(\d{1,2}\/\d{1,2}\/\d{4})\s*[-–]\s*(\d{1,2}\/\d{1,2}\/\d{4})/);
+        if(rangeMatch){
+          // Parse dd/mm/yyyy to yyyy-mm-dd for comparison
+          const parseD=(s)=>{const p=s.split("/");return p[2]+"-"+p[1].padStart(2,"0")+"-"+p[0].padStart(2,"0");};
+          const from=parseD(rangeMatch[1]);
+          const to=parseD(rangeMatch[2]);
+          const shootOk=p.shootDate&&p.shootDate>=from&&p.shootDate<=to;
+          const editOk=p.editDate&&p.editDate>=from&&p.editDate<=to;
+          if(!shootOk&&!editOk)return false;
+        } else {
+          const haystack=[p.product,p.productFullName||"",p.koc,p.concept,p.script||"",fmtDate(p.shootDate),p.shootDate||"",fmtDate(p.editDate),p.editDate||""].join(" ").toLowerCase();
+          if(!haystack.includes(q))return false;
+        }
       }
       return true;
     });
@@ -868,7 +908,7 @@ function App(){
             {/* Search */}
             <div style={{marginBottom:"12px",position:"relative"}}>
               <span style={{position:"absolute",left:"12px",top:"50%",transform:"translateY(-50%)",fontSize:"14px",color:COL.textDim,pointerEvents:"none"}}>🔍</span>
-              <input value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} placeholder="Tìm theo mã SP, tên SP, KOC, concept, kịch bản, ngày quay (12/03/2026)..." style={{...inpS,paddingLeft:"36px",paddingRight:searchQuery?"36px":"12px",padding:"10px 12px 10px 36px",fontSize:"13px",borderRadius:"10px",background:COL.surface,border:`1px solid ${searchQuery?COL.borderActive:COL.border}`,transition:"border-color 0.2s"}}/>
+              <input value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} placeholder="Tìm: mã SP, KOC, concept, KB, ngày (12/03/2026) hoặc khoảng ngày (15/03/2026 - 23/03/2026)..." style={{...inpS,paddingLeft:"36px",paddingRight:searchQuery?"36px":"12px",padding:"10px 12px 10px 36px",fontSize:"13px",borderRadius:"10px",background:COL.surface,border:`1px solid ${searchQuery?COL.borderActive:COL.border}`,transition:"border-color 0.2s"}}/>
               {searchQuery&&<button onClick={()=>setSearchQuery("")} style={{position:"absolute",right:"10px",top:"50%",transform:"translateY(-50%)",background:"none",border:"none",color:COL.textMuted,fontSize:"16px",cursor:"pointer",lineHeight:1}}>×</button>}
             </div>
 
