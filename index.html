@@ -700,26 +700,28 @@ function App(){
       });
     });
 
-    // Keep existing rows that still match new config
+    // Keep ALL existing rows that still match new config (including cloned rows with same KOC+SP+concept)
     const kept=[];
-    const usedKeys=new Set();
     plan.forEach(row=>{
       const matchProduct=editProducts.find(p=>p.name===row.product);
       const matchConcept=editConcepts.includes(row.concept);
       const matchKoc=editKocs.includes(row.koc);
       if(matchProduct&&matchConcept&&matchKoc){
-        // Update product info in case name/link changed
         kept.push({...row,productFullName:matchProduct.fullName||matchProduct.name,productLink:matchProduct.link||""});
-        usedKeys.add(row.koc+"|"+row.product+"|"+row.concept);
       }
     });
 
-    // Add new combos that don't exist yet
+    // Track which KOC+SP+concept combos already exist
+    const existingKeys=new Set();
+    kept.forEach(row=>existingKeys.add(row.koc+"|"+row.product+"|"+row.concept));
+
+    // Add new combos that don't exist yet (1 row per new combo)
     const added=[];
     newCombos.forEach(combo=>{
       const key=combo.koc+"|"+combo.product+"|"+combo.concept;
-      if(!usedKeys.has(key)){
+      if(!existingKeys.has(key)){
         added.push({...combo,id:0,script:"",scriptLink:"",shootStatus:"pending",shootDate:"",editStatus:"pending",editDate:"",status:"pending"});
+        existingKeys.add(key); // Prevent duplicates
       }
     });
 
@@ -727,6 +729,7 @@ function App(){
     const merged=[...kept,...added];
     merged.forEach((r,i)=>{r.id=i+1;});
 
+    console.log("Config update:",kept.length,"kept,",added.length,"added,",plan.length-kept.length,"removed");
     await db.set("config",{products:editProducts,concepts:editConcepts,kocs:editKocs});
     await db.set("plan",merged);
     setShowConfig(false);
@@ -741,7 +744,10 @@ function App(){
   const updateRow=useCallback((id,field,value)=>{
     const idx=plan.findIndex(p=>p.id===id);
     if(idx===-1)return;
-    // Firebase SDK onValue will auto-update state, but we also update modal immediately
+    // Update local state immediately for responsive inputs
+    const newPlan=[...plan];
+    newPlan[idx]={...newPlan[idx],[field]:value};
+    setFbPlan(newPlan);
     setModalRow(prev=>(prev&&prev.id===id?{...prev,[field]:value}:prev));
     debouncedUpdateFb(idx,field,value);
   },[plan,debouncedUpdateFb]);
@@ -816,18 +822,15 @@ function App(){
       if(filterStatus==="edit-pending"&&(p.editStatus||"pending")!=="pending")return false;
       if(filterStatus==="edit-done"&&(p.editStatus||"pending")!=="done")return false;
       if(q){
-        // Check for date range: "15/03/2026 - 23/03/2026" or "15/03/2026-23/03/2026"
+        // Check for date range: "15/03/2026 - 23/03/2026"
         const rangeMatch=q.match(/(\d{1,2}\/\d{1,2}\/\d{4})\s*[-–]\s*(\d{1,2}\/\d{1,2}\/\d{4})/);
         if(rangeMatch){
-          // Parse dd/mm/yyyy to yyyy-mm-dd for comparison
           const parseD=(s)=>{const p=s.split("/");return p[2]+"-"+p[1].padStart(2,"0")+"-"+p[0].padStart(2,"0");};
           const from=parseD(rangeMatch[1]);
           const to=parseD(rangeMatch[2]);
-          const shootOk=p.shootDate&&p.shootDate>=from&&p.shootDate<=to;
-          const editOk=p.editDate&&p.editDate>=from&&p.editDate<=to;
-          if(!shootOk&&!editOk)return false;
+          if(!p.shootDate||p.shootDate<from||p.shootDate>to)return false;
         } else {
-          const haystack=[p.product,p.productFullName||"",p.koc,p.concept,p.script||"",fmtDate(p.shootDate),p.shootDate||"",fmtDate(p.editDate),p.editDate||""].join(" ").toLowerCase();
+          const haystack=[p.product,p.productFullName||"",p.koc,p.concept,p.script||"",fmtDate(p.shootDate),p.shootDate||""].join(" ").toLowerCase();
           if(!haystack.includes(q))return false;
         }
       }
